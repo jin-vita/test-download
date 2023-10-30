@@ -7,6 +7,7 @@
         android:orientation="vertical"
         android:gravity="center_horizontal"
         android:layout_marginHorizontal="20dp"
+        android:keepScreenOn="true"
         tools:context=".MainActivity">
 
     <Button
@@ -30,12 +31,22 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center"
-            android:text="result"/>
+            android:text="다운로드 버튼을 누르세요"/>
+
+    <TextView
+            android:id="@+id/progressTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text=""/>
+
+    <View android:layout_width="match_parent"
+          android:layout_height="30dp"/>
 
     <LinearLayout
             android:id="@+id/layout_video"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_width="640dp"
+            android:layout_height="360dp"
             android:orientation="vertical">
 
         <VideoView

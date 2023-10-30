@@ -1,20 +1,17 @@
 package com.jinvita.testdownload
 
-import android.app.DownloadManager
-import android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.widget.MediaController
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.jinvita.testdownload.databinding.ActivityMainBinding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.io.File
-import java.net.URI
-import kotlin.math.abs
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
     companion object {
@@ -22,82 +19,115 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val binding by lazy { ActivityMainBinding.inflate(layoutInflater) }
-    private var downloadId = 0L
-
-    private val controller by lazy {
-        object : MediaController(this) {
-            override fun show() = super.show(0)
-        }
-    }
+    private val folder = "교육영상"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
-        with(binding) {
-            button.setOnClickListener {
-                binding.resultTextView.text = "비디오 다운로드 중..."
-//                downloadFile("http://211.45.4.23:40009/public/app/BaroWiFi.apk")
-                downloadFile("https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_10mb.mp4")
-            }
-            button2.setOnClickListener { playVideo() }
+        binding.button.setOnClickListener {
+            val fileUrl = "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_10mb.mp4"
+            val fileName = "video1.mp4"
+            binding.resultTextView.text = "$fileName 파일 다운로드 시작"
+            downloadFile(fileUrl, fileName, folder)
+        }
+
+        binding.button2.setOnClickListener {
+            binding.resultTextView.text = "비디오 재생 중"
+            playVideo()
         }
     }
 
-    private fun downloadFile(fileUrl: String) {
-        val downloadRequest = DownloadManager.Request(Uri.parse(fileUrl))
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "video1.mp4")
-            .setNotificationVisibility(VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setTitle("최신 교육 영상")
-            .setDescription("downloading...")
+    // 외부 저장소의 [다운로드] 폴더 내 [abc] 폴더에 파일 저장
+    private fun downloadFile(fileUrl: String, fileName: String, directory: String) {
+        // [다운로드] 폴더
+        val externalStorageDirectory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
 
-        val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val query = DownloadManager.Query().setFilterByStatus(DownloadManager.STATUS_SUCCESSFUL)
+        // [directory] 폴더를 만들기 위한 File 객체 생성
+        val newFolder = File(externalStorageDirectory, directory)
 
-        // 같은 이름이 있으면 삭제 후 설치
-        val cursor = downloadManager.query(query)
-        if (cursor.moveToFirst()) {
-            do {
-                val localUri = cursor.getString(abs(cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)))
-                if (localUri != null && localUri.endsWith("/video1.mp4")) {
-                    val file = File(URI(localUri))
-                    if (file.exists()) {
-                        file.delete()
+        // [abc] 폴더가 없다면 생성
+        if (!newFolder.exists()) newFolder.mkdirs()
+
+        // 다운로드 받을 파일의 이름 및 경로 설정
+        val targetFile = File(newFolder, fileName)
+
+        // 파일 다운로드는 main thread 에서 작동할 수 없음.
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val url = URL(fileUrl)
+                val connection = url.openConnection()
+                val totalSize = connection.contentLength.toLong()
+
+                if (targetFile.exists()) {
+                    AppData.debug(TAG, "이미 $fileName 파일이 존재함")
+                    binding.resultTextView.text = "이미 $fileName 파일이 존재함"
+                    if (totalSize == targetFile.length()) {
+                        AppData.debug(TAG, "이미 $fileName 파일이 다운받아져 있음")
+                        binding.resultTextView.text = "이미 $fileName 파일이 다운받아져 있음"
+                        lifecycleScope.launch {
+                            AppData.showToast(this@MainActivity, "이미 $fileName 파일이 다운받아져 있음")
+                        }
+                        return@launch
+                    } else {
+                        AppData.debug(TAG, "미완료 $fileName 파일이 있어 삭제 후 다운로드 중...")
+                        binding.resultTextView.text = "미완료 $fileName 파일이 있어 삭제 후 다운로드 중..."
+                    }
+                } else {
+                    AppData.debug(TAG, "$fileName 파일 생성 후 다운로드 시작")
+                    binding.resultTextView.text = "$fileName 파일 생성 후 다운로드 중..."
+                }
+                lifecycleScope.launch {
+                    AppData.showToast(this@MainActivity, "$fileName 파일 다운로드 중...")
+                }
+                connection.connect()
+
+                // 파일 다운로드
+                val input: InputStream = connection.getInputStream()
+                val output: OutputStream = FileOutputStream(targetFile)
+                val buffer = ByteArray(1024)
+                var bytesRead: Int
+
+                var totalBytesRead: Long = 0
+                var lastProgress = 0
+
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    output.write(buffer, 0, bytesRead)
+
+                    totalBytesRead += bytesRead
+
+                    // 진행률 계산
+                    val progress = ((totalBytesRead * 100) / totalSize).toInt()
+
+                    // 진행률이 변경될 때마다 로그로 출력
+                    if (progress != lastProgress) {
+                        lastProgress = progress
+                        AppData.error(TAG, "다운로드 진행률: $progress%")
+                        binding.progressTextView.text = "다운로드 진행률: $progress%"
+
+                        // 다운로드 완료 시
+                        if (progress == 100) {
+                            binding.progressTextView.text = ""
+                            binding.resultTextView.text = "$fileName 파일 다운로드 완료"
+                            lifecycleScope.launch {
+                                AppData.showToast(this@MainActivity, "$fileName 파일 다운로드 완료")
+                            }
+                        }
                     }
                 }
-            } while (cursor.moveToNext())
-        }
 
-        cursor.close()
-        downloadId = downloadManager.enqueue(downloadRequest)
-
-        // 다운로드 완료를 처리하기 위한 BroadcastReceiver 등록
-        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
-                if (id == downloadId) {
-                    // 다운로드가 완료되었을 때 처리할 코드를 여기에 추가
-                    // 예를 들어, 다운로드된 파일을 재생하거나 다른 작업을 수행할 수 있습니다.
-                    AppData.showToast(this@MainActivity, "다운로드 완료!")
-                    binding.resultTextView.text = "비디오 다운로드 완료"
-                }
+                output.flush()
+                output.close()
+                input.close()
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
-        registerReceiver(receiver, filter)
     }
 
-    private fun ActivityMainBinding.playVideo() = with(videoView) {
-
+    private fun playVideo() = with(binding.videoView) {
         val videoPath =
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).path + "/video1.mp4"
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).path + "/$folder/video1.mp4"
         setVideoPath(videoPath)
-        setOnCompletionListener {
-            controller.show(0)
-            start()
-        }
-        setOnPreparedListener { controller.show(0) }
         start()
-
-        resultTextView.text = "비디오 재생 중"
     }
 }
